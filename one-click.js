@@ -1,5 +1,28 @@
 (function(glob) {
   
+  function printCircularDepError(wasNotLoaded) {
+    // TODO: Support circular dependencies.
+    var sawCircle = false;
+    console.error(
+      "Circular dependency or unsatisfiable module %c" + wasNotLoaded.relPath  + "%c -> [" +
+      Object.keys(wasNotLoaded.fieldAccessesByDependency).map(function(dep) {
+          return !OneClick.modulesFromRoot[dep] ? 'empty ' : (
+            (!sawCircle && dep === wasNotLoaded.relPath ? (sawCircle = true, '%c' + dep + '%c') : dep) +
+            ' -> [' +
+            Object.keys(OneClick.modulesFromRoot[dep].fieldAccessesByDependency).map(
+              function(depDep) {
+                return !sawCircle && depDep === wasNotLoaded.relPath ? (sawCircle = true, '%c' + depDep + '%c') : depDep;
+              }
+            ).join(', ') + ']'
+          );
+        }).join(', ') + ']',
+      'font-weight:bold; background: red; color: #ffffff',
+      'font-weight:normal; background: none; color: none',
+      sawCircle ? 'font-weight:bold; background: red; color: #ffffff' :
+      '. Inspect the following window.OneClick.modulesFromRoot dependency graph for cicular references. ',
+      sawCircle ?  'font-weight:normal; background: none; color: none' : window.OneClick.modulesFromRoot,
+    );
+  }
   function relativizeImpl(requiringDirRelRoot, toRel) {
     if(toRel.length === 0) {
       throw ["Cannot resolve ", requiringDirRelRoot.join('/'), toRel.join('/')];
@@ -49,7 +72,7 @@
   var canAndShouldBeLoadedNow = function(moduleData) {
     var allLoading = true;
     if(moduleData.status !== 'loading') {
-      for(var dep in moduleData.dependencies) {
+      for(var dep in moduleData.fieldAccessesByDependency) {
         if(OneClick.modulesFromRoot[dep].status !== 'loading') {
           return null;
         }
@@ -105,7 +128,8 @@
           window.exports = module.exports;
           require = function(reqPath) {
             var resolved = parent.OneClick.resolve("${moduleData.relPath}", reqPath);
-            return parent.window.OneClick.modulesFromRoot[resolved].moduleExports;
+            var moduleExports = parent.window.OneClick.modulesFromRoot[resolved].moduleExports;
+            return moduleExports;
           };
         </script>
         <script src="${moduleData.relPath}"> </script></body></html>
@@ -119,19 +143,21 @@
     doc.close();
   }
   var handleScrapeMesage = function(moduleAt, makesRequireCalls) {
-    var dependencies = {};
+    var fieldAccessesByDependency = {};
     OneClick.modulesFromRoot[moduleAt].status = 'scraped';
     for(var requireCall in makesRequireCalls) {
+      var fieldAccesses = makesRequireCalls[requireCall];
       var rootRelRequireCall = OneClick.resolve(moduleAt, requireCall);
-      dependencies[rootRelRequireCall] = true;
+      fieldAccessesByDependency[rootRelRequireCall] = fieldAccesses;
+      // Crawls the fieldAccessesByDependency:
       requireScrapeRound(moduleAt, requireCall);
     }
-    OneClick.modulesFromRoot[moduleAt].dependencies = dependencies;
+    OneClick.modulesFromRoot[moduleAt].fieldAccessesByDependency = fieldAccessesByDependency;
     function allHaveStatus(status) {
       var allHave = true;
       for(var aRelModPath in OneClick.modulesFromRoot) {
         var moduleData = OneClick.modulesFromRoot[aRelModPath];
-        for(var dependency in moduleData.dependencies) {
+        for(var dependency in moduleData.fieldAccessesByDependency) {
           if(!OneClick.modulesFromRoot[dependency] ||
             OneClick.modulesFromRoot[dependency].status !== status) {
             allHave = false;
@@ -149,11 +175,7 @@
       }
       var wasNotLoaded = firstNonNull(notLoaded);
       if(wasNotLoaded !== null) {
-        // TODO: Support circular dependencies.
-        console.error(
-          "Circular dependency or unsatisfiable module " + wasNotLoaded.relPath,
-          wasNotLoaded
-        );
+        printCircularDepError(wasNotLoaded);
       }
     }
   };
@@ -165,7 +187,10 @@
   // We get messages back about which modules depend on which.
   window.onmessage = function(msg) {
     if(msg.data.type === 'scrapeMessage') {
-      handleScrapeMesage(msg.data.moduleAt, msg.data.makesRequireCalls);
+      handleScrapeMesage(
+        msg.data.moduleAt,
+        msg.data.makesRequireCalls
+      );
     } else if(msg.data.type === 'badRequire') {
       handleBadRequireMessage(msg.data.requestedBy, msg.data.requireCall);
     } 
@@ -197,7 +222,7 @@
       status: 'scraping',
       relPath: relPathFromRoot,
       moduleExports: module.exports,
-      dependencies: null
+      fieldAccessesByDependency: null
     };
     OneClick.modulesFromRoot[relPathFromRoot] = moduleData;
     // Scrape the dependencies by dry running them.
@@ -211,9 +236,7 @@
       <script>
         // Suppress any IO we can - we just want to scrape the deps.
         var foooo = "bar";
-        window.recordedDependencies = {
-        };
-        window.recordedDependencies = {
+        window.recordedFieldAccessesByRequireCall = {
         };
         console = {log: function(args) { }};
         console.error = window.console.log;
@@ -229,13 +252,23 @@
           exports: exports
         };
         require = function(modPath) {
-          window.recordedDependencies[modPath] = true;
+          window.recordedFieldAccessesByRequireCall[modPath] = [];
           // TODO: make this a proxy object.
-          return { };
+          var p = new Proxy({}, {
+            get: function(target, prop, receiver) {
+              alert('trying to get ' + prop);
+              window.recordedFieldAccessesByRequireCall[modPath].push(prop);
+              return Reflect.get(...arguments);
+            }
+          });
+          return p;
         };
         function onBadDep() {
-          parent.postMessage(
-            {type: 'badRequire', requestedBy: "${requestedBy}", requireCall: "${relPathFromRoot}"},
+          parent.postMessage({
+              type: 'badRequire',
+              requestedBy: "${requestedBy}",
+              requireCall: "${relPathFromRoot}"
+            },
             '*'
           );
         }
@@ -243,7 +276,11 @@
       <script onerror="onBadDep()"src="${relPathFromRoot}"> </script></body></html>
       <script>
         parent.postMessage(
-          {type:'scrapeMessage', moduleAt: "${relPathFromRoot}", makesRequireCalls: window.recordedDependencies},
+          {
+            type:'scrapeMessage',
+            moduleAt: "${relPathFromRoot}",
+            makesRequireCalls: window.recordedFieldAccessesByRequireCall
+          },
           '*'
         );
         // Just in case you try to require() in a Chrome console that is still
