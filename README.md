@@ -6,11 +6,15 @@ Use CommonJS modules directly in the browser with no build step and no web serve
 - Send static HTML/JS bundles to people that they can double click to open.
 - Hit reload in the browser to refresh. Works offline.
 
+### Try:
+
+Download this repo and double click the `./example/index.html` (that's sort of
+the whole point).
 
 ### Using:
 
-Just include a script tag like this, specifying a `data-main` entrypoint module
-to load:
+Either start with the example, or include a script tag like this in your
+project, specifying a `data-main` entrypoint module to load:
 
 ```html
 <script type="text/javascript" src="./one-click.js" data-main="./my-module.js">
@@ -54,7 +58,28 @@ instead, we embed each file in a separate iframe in order to load.  This might
 cause some problems if you are counting on the window object being exactly
 equal to the window object in other modules. There may be a solution to that
 problem.
+Most of the globals on `window` are synchronized with the main window (except
+the `window` and `document` variables which cannot be synchronized).
 
+Since each module is isolated in their own iframes, array literals `[1, 2, 3]`
+will technically be considered as originating from different `Array` classes
+depending on which module they were created in.  This is already something that
+the web has to deal with because objects could be created in any `iframe` - so
+JS frameworks already guard against this and should work fine.
+The main thing they need to do is use `Array.isArray` instead of `instanceof Array`,
+and you should do so in your own code as well (regardless of if you use
+`one-click.js`).
+
+
+### If You Need To Access `window` or `document`:
+
+Most commonJS modules and framework code will never assume there is exactly one
+`window` or `document`, so they tend to accept an argument for root node to
+their rendering functions (like ReactJS does). But if for some reason one of
+your modules does want to access the main `window` or `document`, it can do so
+with `parent.window.document`, or `parent.window`. When written that way, your
+code will work whether or not it in an isolated iframe module, or running on
+the root page (because on the root most page, `parent` is `window`.
 
 See Also:
 [require1k](http://stuk.github.io/require1k/) (Great reference, requires running a web server).
