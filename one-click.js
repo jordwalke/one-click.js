@@ -1,5 +1,14 @@
 (function(glob) {
   
+  var windowSetup =
+    Object.getOwnPropertyNames(window).reduce(
+      function(cur, nm) {
+        return nm[0].toUpperCase() === nm[0] ? cur.concat([nm + ' = parent.' + nm]) : cur
+      },
+      []
+    ).join(',');
+      
+  
   function printCircularDepError(wasNotLoaded) {
     // TODO: Support circular dependencies.
     var sawCircle = false;
@@ -82,6 +91,25 @@
       return null;
     }
   };
+  // This time allow returning a module if its deps aren't loading yet, but
+  // only as long as their backwards referenced module load-time field accesses
+  // are empty.
+  var canBreakCircularDependency = function(moduleData) {
+    var allLoading = true;
+    if(moduleData.status !== 'loading') {
+      for(var dep in moduleData.fieldAccessesByDependency) {
+        var invalidatesAbilityToBreakCircularDependency =
+          OneClick.modulesFromRoot[dep].status !== 'loading' &&
+          moduleData.fieldAccessesByDependency[dep].length !== 0;
+        if(invalidatesAbilityToBreakCircularDependency) {
+          return null;
+        }
+      }
+      return moduleData;
+    } else {
+      return null;
+    }
+  };
   var notLoaded = function(moduleData) {
     if(moduleData.status !== 'loading') {
       return moduleData;
@@ -117,10 +145,13 @@
     iframe.style="display:none !important"
     document.body.appendChild(iframe);
     var doc =iframe.contentWindow.document;
-    iframe.onload=function(){document.body.removeChild(iframe)};
+    // If you remove the iframe, it will make it so that break points within it
+    // do not work (and debugger calls as well) (and calls to console.log).
+    // iframe.onload=function(){document.body.removeChild(iframe)};
     var isolatedScript = `
         <html><head><title></title></head><body>
         <script>
+          ${windowSetup}
           var origExports = {};
           window.module = {
             exports: origExports
@@ -131,10 +162,28 @@
             var moduleExports = parent.window.OneClick.modulesFromRoot[resolved].moduleExports;
             return moduleExports;
           };
+          // In this case, remapping the console isn't just for compatibility,
+          // but there's a bug in chrome where consoles of iframes don't work.
+          // https://github.com/karma-runner/karma/issues/1373
+          // There's still an issue with the debugger not working in iframe'd
+          // modules (Chrome only - no repro in Safari).
+          // I believe it's becaue the code you place a debugger in is executed
+          // in the iframe's context, but when called from another context such
+          // as the Devtools Console does not invoke debuggers.
+          // TODO: Add all the other builtins.
+          Array = parent.Array;
         </script>
         <script src="${moduleData.relPath}"> </script></body></html>
         <script>
-          parent.window.OneClick.modulesFromRoot["${moduleData.relPath}"].moduleExports = window.module.exports;
+          if(typeof window.module.exports === 'object') {
+            for(var exportedKey in window.module.exports) {
+              parent.window.OneClick.modulesFromRoot["${moduleData.relPath}"].moduleExports[exportedKey] =
+                window.module.exports[exportedKey];
+            }
+          } else {
+            parent.window.OneClick.modulesFromRoot["${moduleData.relPath}"].moduleExports =
+              window.module.exports;
+          }
         </script>
         </body></html>
     `;
@@ -170,7 +219,13 @@
     if(allScraped) {
       var canBeLoaded;
       var count = 0;
-      while(count++ < 100 && ((canBeLoaded = firstNonNull(canAndShouldBeLoadedNow))!= null)) {
+      while(
+        count++ < 100 &&
+        (
+          (canBeLoaded = firstNonNull(canAndShouldBeLoadedNow)) ||
+          (canBeLoaded = firstNonNull(canBreakCircularDependency))
+        )
+      ) {
         loadModuleForModuleData(canBeLoaded);
       }
       var wasNotLoaded = firstNonNull(notLoaded);
@@ -213,15 +268,12 @@
         return;
       }
     }
-    var origExports = {};
-    window.module = {
-      exports: origExports
-    };
-    window.exports = module.exports;
     var moduleData = {
       status: 'scraping',
       relPath: relPathFromRoot,
-      moduleExports: module.exports,
+      // Initially set to empty because we actually copy over fields to this in
+      // case something needed to depend on it in a circular manner.
+      moduleExports: {},
       fieldAccessesByDependency: null
     };
     OneClick.modulesFromRoot[relPathFromRoot] = moduleData;
@@ -230,20 +282,24 @@
     var iframe = document.createElement('iframe');
     iframe.style="display:none !important"
     document.body.appendChild(iframe);
-    iframe.onload=function(){document.body.removeChild(iframe)};
+    // iframe.onload=function(){document.body.removeChild(iframe)};
     var scrapingScript =
     `<html><head><title></title></head><body>
       <script>
         // Suppress any IO we can - we just want to scrape the deps.
-        var foooo = "bar";
-        window.recordedFieldAccessesByRequireCall = {
-        };
+        ${windowSetup}
+        window.recordedFieldAccessesByRequireCall = {};
         console = {log: function(args) { }};
         console.error = window.console.log;
         console.warn = window.console.log;
         console.table = window.console.log;
+        // TODO: Mock out any classes like XHR or LocalStorage.
+        
         window.onerror = function(msg, url, lineNo, columnNo, error){
-          // In iframe error - mask all issues.
+          // In iframe error - mask all issues, but break on debugger so
+          // the user can know something happened when trying to map out
+          // the dependency graph. It will likely throw an error again when
+          // actually running the modules.
           debugger;
           return true;
         };
@@ -256,7 +312,6 @@
           // TODO: make this a proxy object.
           var p = new Proxy({}, {
             get: function(target, prop, receiver) {
-              alert('trying to get ' + prop);
               window.recordedFieldAccessesByRequireCall[modPath].push(prop);
               return Reflect.get(...arguments);
             }
