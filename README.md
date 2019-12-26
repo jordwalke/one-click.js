@@ -79,7 +79,7 @@ their rendering functions (like ReactJS does). But if for some reason one of
 your modules does want to access the main `window` or `document`, it can do so
 with `parent.window.document`, or `parent.window`. When written that way, your
 code will work whether or not it in an isolated iframe module, or running on
-the root page (because on the root most page, `parent` is `window`.
+the root page (because on the root most page, `parent` is `window`).
 
 See Also:
 [require1k](http://stuk.github.io/require1k/) (Great reference, requires running a web server).
