@@ -4,20 +4,37 @@
     <style>
       body {background-color: #EEE; color: #333; width: 100%; height: 100%; overflow: hidden;}
       #title {font-size:100px; font-weight:bold; font-family: 'Arial'; margin-top:100px;}
+      #checkcontainer {width: 120px; height: 120px; display: block; background-color: #dddddd; box-shadow: inset 0px 0px 0px 10px #cccccc; border-radius: 50%; }
+      .checkcircle {border-radius: 50%; width: 120px; height: 120px;}
+      #checkcontainer.animate {stroke-width: 2; stroke-miterlimit: 10; animation: scale .2s ease-in-out .0s both; }
+      .animate .checkcircle { display: block; stroke-width: 2; stroke: #deecd2; stroke-miterlimit: 10; /* This box-shadow gives an immediate sense of load time but is a little uglier */ box-shadow: inset 0px 0px 0px 10px #7cb550; animation: fill .8s ease-in-out .0s forwards; } 
+      .animate .checkmark { transform-origin: 50% 50%; stroke-dasharray: 48; stroke-dashoffset: 48; animation: checkstroke 0.3s cubic-bezier(0.62, 0, 0.43, 1) 0.0s forwards; }
+      @keyframes checkstroke { 100% { stroke-dashoffset: 0; } }
+      @keyframes scale { 0%, 100% { transform: none; } 100% { background-color: #7cb550; } 50% { transform: scale3d(1.1, 1.1, 1); } }
+      @keyframes fill { 40% { box-shadow: inset 0px 0px 0px 10px #7cb550; } 100% { box-shadow: inset 0px 0px 0px 150px #7cb550; } }
+      #one-click { margin-top: 100px; }
     </style>
   </head>
   <body >
   <script type="text/javascript" src="../one-click.js" data-main="./main-module.js"> </script>
   <div id="title">
     <center>one-click</center>
-    <center>
-      <svg width="400px" height="400px" >
-        <circle id="what" cx="200" cy="200" r="100" fill='#e05858'/>
-        <circle id="what" cx="200" cy="200" r="80" fill='#e04747'/>
-        <text id="what" x="144" y="222" fill='white'>.js </text>
-      </svg>
+    <center id="one-click">
+      <div id="checkcontainer">
+        <svg
+          class="checkcircle"
+          viewBox="0 0 52 52">
+          <path stroke-width="4px" class="checkmark" fill="none" d="M14.1 27.2l7.1 7.2 16.7-16.8">
+          </path>
+        </svg>
+      </div>
     </center>
   </div>
   </body>
+  <script>
+    OneClick.onMain(function() {
+      document.getElementById('checkcontainer').className="animate";
+    });
+  </script>
   
 </HTML>
