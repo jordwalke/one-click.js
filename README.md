@@ -1,6 +1,6 @@
 # One Click, Offline, CommonJS Modules
 
-<img src="./example/button.png" alt="one click" title="One click" width="80px" height="80px">
+<img src="./example/button.png" alt="one click" title="One click" width="320px" height="320px">
 
 
 Use CommonJS modules directly in the browser with no build step and no web server.
